@@ -1,0 +1,100 @@
+"""
+2D GEOMETRIC TRANSFORMATIONS DEMO
+Applies translation, scaling, rotation, reflection and shear to a triangle,
+prints the new corner points and draws every result with Matplotlib.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+# A triangle: x and y of the 3 corners (first point repeated to close the shape)
+X = np.array([0, 4, 2, 0])
+Y = np.array([0, 0, 3, 0])
+
+
+def translate(x, y, tx, ty):
+    """Move the shape by tx (left/right) and ty (up/down)."""
+    return x + tx, y + ty
+
+
+def scale(x, y, sx, sy):
+    """Make the shape bigger (factor > 1) or smaller (factor < 1)."""
+    return x * sx, y * sy
+
+
+def rotate(x, y, angle):
+    """Rotate the shape around the origin (angle in degrees)."""
+    a = np.radians(angle)                      # degrees -> radians
+    new_x = x * np.cos(a) - y * np.sin(a)
+    new_y = x * np.sin(a) + y * np.cos(a)
+    return new_x, new_y
+
+
+def reflect_x(x, y):
+    """Flip the shape over the x-axis (y becomes -y)."""
+    return x, -y
+
+
+def shear_x(x, y, k):
+    """Slant the shape sideways (x changes depending on y)."""
+    return x + k * y, y
+
+
+def corners(x, y):
+    """Return the 3 corners as a list of (x, y) pairs, rounded for display."""
+    return [(round(float(a), 2), round(float(b), 2))
+            for a, b in zip(x[:3], y[:3])]
+
+
+def draw(ax, title, new_x, new_y, color):
+    """Draw the original (grey) and the transformed (coloured) triangle."""
+    ax.plot(X, Y, "o--", color="gray", label="Original")
+    ax.plot(new_x, new_y, "o-", color=color, label="Transformed")
+    ax.set_title(title, fontsize=10)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.grid(True, linestyle="--", alpha=0.5)
+    ax.set_xlim(-8, 12)
+    ax.set_ylim(-8, 10)
+    ax.set_aspect("equal")
+
+
+def main():
+    print("===== 2D GEOMETRIC TRANSFORMATIONS =====")
+    print(f"{'Original corners':<20}:", corners(X, Y))
+
+    # Apply the five transformations
+    results = [
+        ("Translate (+5, +2)", translate(X, Y, 5, 2), "blue"),
+        ("Scale (x2)", scale(X, Y, 2, 2), "green"),
+        ("Rotate 90 degrees", rotate(X, Y, 90), "red"),
+        ("Reflect over x-axis", reflect_x(X, Y), "purple"),
+        ("Shear (k = 1)", shear_x(X, Y, 1), "orange"),
+    ]
+
+    # Print the new corner points of each result
+    for title, (nx, ny), _ in results:
+        print(f"{title:<20}:", corners(nx, ny))
+
+    # Draw each transformation in its own small graph
+    fig, axes = plt.subplots(2, 3, figsize=(12, 8))
+    axes = axes.flatten()
+
+    # First graph shows only the original triangle
+    draw(axes[0], "Original", X, Y, "black")
+
+    # The other five graphs show each transformation
+    for ax, (title, (nx, ny), color) in zip(axes[1:], results):
+        draw(ax, title, nx, ny, color)
+
+    axes[0].legend(loc="upper left", fontsize=8)
+    plt.suptitle("2D Geometric Transformations")
+    plt.tight_layout()
+    plt.savefig("output.png", dpi=120)
+    print("\nGraph saved as output.png")
+    plt.show()
+
+
+# Run the program
+if __name__ == "__main__":
+    main()
