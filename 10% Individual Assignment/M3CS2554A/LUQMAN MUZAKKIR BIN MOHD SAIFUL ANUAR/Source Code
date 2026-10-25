@@ -1,0 +1,305 @@
+import os
+import sys
+import math
+import time
+import random
+import threading
+import multiprocessing
+
+try:
+    from PIL import Image, ImageFilter, ImageStat
+except ImportError:
+    raise SystemExit("Pillow is not installed. Run:  python -m pip install pillow")
+
+# ----------------------------- Settings -----------------------------
+IMAGE_SIZE = (128, 128)          # size of every simulated image / analysis size
+DEFAULT_IMAGE_COUNT = 10000
+WORKERS = os.cpu_count() or 4
+VALID_EXT = (".jpg", ".jpeg", ".png", ".bmp")
+OUTPUT_DIR = "images_output"
+
+DARK_LIMIT = 85                  # brightness < 85   -> Dark
+BRIGHT_LIMIT = 170               # brightness > 170  -> Bright
+
+# list of (image_id, source); source = seed (int) or file path (str)
+tasks = [(i, i) for i in range(DEFAULT_IMAGE_COUNT)]
+dataset_label = f"{DEFAULT_IMAGE_COUNT:,} simulated images"
+
+
+# ------------------------- Core image pipeline -------------------------
+def load_gray(source):
+    """Return a grayscale image. A number means 'generate a simulated image'."""
+    if isinstance(source, str):                         # real image file
+        return Image.open(source).convert("L").resize(IMAGE_SIZE)
+
+    rng = random.Random(source)                         # simulated image
+    base = rng.randint(45, 210)                         # overall brightness of this image
+    w, h = IMAGE_SIZE
+    pixels = bytes([base + int(rng.random() * 81) - 40 for _ in range(w * h)])
+    return Image.frombytes("L", IMAGE_SIZE, pixels)
+
+
+def classify_image(brightness):
+    """Classify an image by its average brightness (0-255)."""
+    if brightness > BRIGHT_LIMIT:
+        status = "Bright"
+    elif brightness < DARK_LIMIT:
+        status = "Dark"
+    else:
+        status = "Normal"
+    return status
+
+
+def process_image(task):
+    """Run the full filter pipeline on one image.
+    Returns (status, average_brightness, edge_strength)."""
+    _, source = task
+
+    # 1. Load / generate + grayscale
+    gray = load_gray(source)
+
+    # 2. Gaussian blur (noise reduction)
+    blurred = gray.filter(ImageFilter.GaussianBlur(radius=2))
+
+    # 3. Edge detection -> average edge strength
+    edges = blurred.filter(ImageFilter.FIND_EDGES)
+    edge_strength = ImageStat.Stat(edges).mean[0]
+
+    # 4. Pure-Python pixel analysis (CPU-bound, holds the GIL)
+    total = 0
+    count = 0
+    for px in gray.tobytes():
+        total += px
+        count += 1
+    brightness = total / count
+
+    # 5. Classification
+    return classify_image(brightness), brightness, edge_strength
+
+
+# --------------------------- Execution models ---------------------------
+def run_sequential(items):
+    return [process_image(t) for t in items]
+
+
+def run_threading(items):
+    out = [None] * len(items)
+    size = math.ceil(len(items) / WORKERS)
+
+    def worker(start, end):
+        for i in range(start, end):
+            out[i] = process_image(items[i])
+
+    threads = []
+    for w in range(WORKERS):
+        start, end = w * size, min((w + 1) * size, len(items))
+        if start >= end:
+            break
+        t = threading.Thread(target=worker, args=(start, end))
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
+    return out
+
+
+def run_parallel(items):
+    chunk = max(1, len(items) // (WORKERS * 4))
+    with multiprocessing.Pool(processes=WORKERS) as pool:
+        return pool.map(process_image, items, chunksize=chunk)
+
+
+METHODS = [
+    ("Sequential", run_sequential),
+    ("Threading", run_threading),
+    ("Parallel", run_parallel),
+]
+
+
+def summarize(output, elapsed):
+    counts = {"Bright": 0, "Normal": 0, "Dark": 0}
+    for status, _, _ in output:
+        counts[status] += 1
+    return {
+        "time": elapsed,
+        "counts": counts,
+        "total": len(output),
+        "brightness": sum(r[1] for r in output) / len(output),
+        "edge": sum(r[2] for r in output) / len(output),
+    }
+
+
+# ------------------------------ Combined run ------------------------------
+def run_full_comparison():
+    """Run Sequential, Threading and Parallel one after another and print
+    ONE combined report. (They are not run at the same moment, because that
+    would make them compete for the same CPU cores and give wrong timings.)"""
+    n = len(tasks)
+    print(f"\n  Starting FULL comparison on {n:,} images with {WORKERS} workers...")
+    print("  " + "-" * 60)
+
+    results = {}
+    overall = time.perf_counter()
+    for step, (name, func) in enumerate(METHODS, start=1):
+        print(f"  [{step}/3] Running {name:<10} ...", end=" ", flush=True)
+        start = time.perf_counter()
+        output = func(tasks)
+        elapsed = time.perf_counter() - start
+        results[name] = summarize(output, elapsed)
+        print(f"done in {elapsed:.4f} s")
+    total_time = time.perf_counter() - overall
+
+    show_report(results, total_time)
+
+
+def show_report(results, total_time):
+    seq = results["Sequential"]["time"]
+    slowest = max(r["time"] for r in results.values())
+    ref = results["Sequential"]
+    same = all(r["counts"] == ref["counts"] for r in results.values())
+    total = ref["total"]
+
+    line = "  " + "=" * 62
+    print("\n" + line)
+    print(f"  COMBINED RESULT  -  {total:,} images, {WORKERS} workers")
+    print("  " + "-" * 62)
+    print(f"  {'Method':<12}{'Time (s)':>11}{'Speedup':>10}   Time bar")
+    for name, r in results.items():
+        bar = "#" * max(1, int(28 * r["time"] / slowest))
+        print(f"  {name:<12}{r['time']:>11.4f}{seq / r['time']:>9.2f}x   {bar}")
+    print("  " + "-" * 62)
+    fastest = min(results, key=lambda k: results[k]["time"])
+    print(f"  Fastest method : {fastest}")
+    print(f"  Threading vs Sequential : {seq / results['Threading']['time']:.2f}x"
+          "   (limited by the GIL)")
+    print(f"  Parallel  vs Sequential : {seq / results['Parallel']['time']:.2f}x"
+          f"   (using {WORKERS} processes)")
+
+    print("\n  IMAGE BRIGHTNESS SUMMARY")
+    print("  " + "-" * 62)
+    for label in ("Bright", "Normal", "Dark"):
+        c = ref["counts"][label]
+        print(f"  {label + ' images:':<24}{c:>10,}  ({c * 100 / total:.1f}%)")
+    print(f"  {'Total processed:':<24}{total:>10,}")
+    print(f"  {'Average brightness:':<24}{ref['brightness']:>10.2f}  (0-255)")
+    print(f"  {'Average edge strength:':<24}{ref['edge']:>10.2f}")
+    print(f"  {'All methods same result:':<24}{'YES' if same else 'NO':>10}")
+    print("  " + "-" * 62)
+    print(f"  Total time for the whole comparison: {total_time:.2f} s")
+    print(line)
+
+
+# ------------------------------ Menu actions ------------------------------
+def set_dataset_size():
+    global tasks, dataset_label
+    raw = input(f"\n  How many images to generate? [default {DEFAULT_IMAGE_COUNT:,}]: ").strip()
+    try:
+        n = int(raw.replace(",", "")) if raw else DEFAULT_IMAGE_COUNT
+        if n <= 0:
+            raise ValueError
+    except ValueError:
+        print("  Please enter a positive whole number.")
+        return
+    tasks = [(i, i) for i in range(n)]          # (image_id, seed)
+    dataset_label = f"{n:,} simulated images"
+    print(f"  {n:,} simulated {IMAGE_SIZE[0]}x{IMAGE_SIZE[1]} images are ready "
+          f"(each is generated when it is processed).")
+
+
+def load_own_folder():
+    global tasks, dataset_label
+    folder = input("\n  Enter the folder path containing your images: ").strip().strip('"')
+    if not os.path.isdir(folder):
+        print("  Folder not found.")
+        return
+    paths = [os.path.join(folder, f) for f in sorted(os.listdir(folder))
+             if f.lower().endswith(VALID_EXT)]
+    if not paths:
+        print(f"  No images found ({', '.join(VALID_EXT)}).")
+        return
+    tasks = [(i, p) for i, p in enumerate(paths)]
+    dataset_label = f"{len(paths):,} images from your folder"
+    print(f"  Loaded {len(paths):,} images from '{folder}'.")
+
+
+def save_sample():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    gray = load_gray(tasks[0][1])
+    blurred = gray.filter(ImageFilter.GaussianBlur(radius=2))
+    edges = blurred.filter(ImageFilter.FIND_EDGES)
+    gray.save(os.path.join(OUTPUT_DIR, "sample_gray.png"))
+    blurred.save(os.path.join(OUTPUT_DIR, "sample_blur.png"))
+    edges.save(os.path.join(OUTPUT_DIR, "sample_edges.png"))
+    print(f"\n  Saved sample_gray.png, sample_blur.png and sample_edges.png "
+          f"in '{OUTPUT_DIR}/'.")
+
+
+def show_instructions():
+    print("""
+  ======================== HOW TO USE ========================
+  [1] Run FULL comparison
+        Runs Sequential, Threading and Parallel automatically, one
+        after another, and prints ONE combined report with the times,
+        speedup, Dark / Normal / Bright summary and a correctness check.
+        Take your screenshot from this report.
+  [2] Set dataset size
+        Choose how many simulated images to use (default 10,000).
+        Use a smaller number for a quicker demo.
+  [3] Load my own folder
+        Use your own .jpg / .png / .bmp images instead.
+  [4] Save sample output
+        Saves the gray / blur / edge result of one image.
+
+  Classification rule (average brightness 0-255):
+       Bright : brightness > 170
+       Dark   : brightness < 85
+       Normal : all other cases
+
+  Notes:
+   - Close other heavy programs for fairer timings.
+   - Expected: Parallel is fastest; Threading is close to Sequential
+     because of the GIL.
+  ============================================================""")
+
+
+def print_menu():
+    print(f"""
+  ************************************************************
+   IMAGE BRIGHTNESS ANALYZER - IMAGE PROCESSING WITH PYTHON
+   Sequential vs Threading vs Parallel
+   CPU cores: {WORKERS}   |   Dataset: {dataset_label}
+  ************************************************************
+   [1] Run FULL comparison (Sequential + Threading + Parallel)
+   [2] Set dataset size
+   [3] Load my own image folder
+   [4] Save sample output image
+   [5] Instructions
+   [0] Exit
+  ------------------------------------------------------------""")
+
+
+def main():
+    actions = {
+        "1": run_full_comparison,
+        "2": set_dataset_size,
+        "3": load_own_folder,
+        "4": save_sample,
+        "5": show_instructions,
+    }
+    while True:
+        print_menu()
+        choice = input("  Enter your choice: ").strip()
+        if choice == "0":
+            print("\n  Goodbye!")
+            break
+        action = actions.get(choice)
+        if action:
+            action()
+        else:
+            print("\n  Invalid choice. Please enter a number from 0 to 5.")
+        input("\n  Press Enter to continue...")
+
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()   # needed for Windows
+    main()

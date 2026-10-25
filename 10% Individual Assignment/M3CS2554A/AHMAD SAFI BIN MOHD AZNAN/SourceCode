@@ -1,0 +1,51 @@
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Step 1: Load the original image
+image = cv2.imread("sample.jpg")
+
+if image is None:
+    raise FileNotFoundError("Please add sample.jpg to your project folder.")
+
+# Step 2: Convert the image from BGR to RGB
+original = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+# Step 3: Grayscale conversion
+grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+# Step 4: Apply Gaussian blur
+blurred = cv2.GaussianBlur(original, (15, 15), 0)
+
+# Step 5: Apply Canny edge detection
+edges = cv2.Canny(grayscale, 100, 200)
+
+# Step 6: Display all four images
+plt.figure(figsize=(12, 8))
+
+plt.subplot(2, 2, 1)
+plt.imshow(original)
+plt.title("Original Image")
+plt.axis("off")
+
+plt.subplot(2, 2, 2)
+plt.imshow(grayscale, cmap="gray")
+plt.title("Grayscale Conversion")
+plt.axis("off")
+
+plt.subplot(2, 2, 3)
+plt.imshow(blurred)
+plt.title("Gaussian Blur")
+plt.axis("off")
+
+plt.subplot(2, 2, 4)
+plt.imshow(edges, cmap="gray")
+plt.title("Canny Edge Detection")
+plt.axis("off")
+
+plt.tight_layout()
+plt.savefig("results.png")
+plt.show()
+
+print("Image processing completed successfully!")

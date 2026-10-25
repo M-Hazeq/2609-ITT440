@@ -1,0 +1,106 @@
+import time
+import random
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+
+# Object Category 
+CATEGORIES = {
+    "Terrain (Green)": 0,
+    "Sky (Blue)": 0,
+    "Water (Cyan)": 0,
+    "Buildings (Grey)": 0,
+    "Characters (Red)": 0
+}
+
+# function for task rendering (CPU-intensive task)
+def render_vertex(vertex):
+    x, y, z = vertex['x'], vertex['y'], vertex['z']
+    # Simulation calculation complex (example matrix transformation 3D)
+    result = (x**2 + y**2 + z**2) ** 0.5
+    for _ in range(300):  # Artificial load impact CPU
+        result = (result * 1.5) / 1.5
+    return result
+
+# 1. Method Sequential
+def run_sequential(data):
+    start_time = time.time()
+    results = [render_vertex(v) for v in data]
+    return time.time() - start_time
+
+# 2. Method Threading (Concurrent)
+def run_threading(data, num_threads):
+    start_time = time.time()
+    with ThreadPoolExecutor(max_workers=num_threads) as executor:
+        list(executor.map(render_vertex, data))
+    return time.time() - start_time
+
+# 3. Method Multiprocessing (Parallel)
+def run_multiprocessing(data, num_processes):
+    start_time = time.time()
+    with ProcessPoolExecutor(max_workers=num_processes) as executor:
+        chunksize = max(1, len(data) // (num_processes * 4))
+        list(executor.map(render_vertex, data, chunksize=chunksize))
+    return time.time() - start_time
+
+if __name__ == '__main__':
+    print("--- Graphic Rendering Performance Simulator ---")
+    
+    # User input
+    try:
+        num_vertices = int(input("Enter number of vertices/pixels to simulate (example: 1000000): "))
+        num_threads = int(input("Enter number of threads: "))
+        num_processes = int(input("Enter number of processes: "))
+    except ValueError:
+        print("Sila masukkan nombor bulat sahaja. Program dihentikan.")
+        exit()
+
+    print(f"\nGenerating {num_vertices} graphical vertices... Please wait.")
+    
+    # Simulation starting
+    dataset = []
+    categories_keys = list(CATEGORIES.keys())
+    
+    for _ in range(num_vertices):
+        cat = random.choice(categories_keys)
+        CATEGORIES[cat] += 1
+        dataset.append({
+            'x': random.uniform(-100, 100),
+            'y': random.uniform(-100, 100),
+            'z': random.uniform(-100, 100),
+            'type': cat
+        })
+
+    print("Data generated. Starting rendering processes...\n")
+
+    # Execution and time taken
+    time_seq = run_sequential(dataset)
+    print("Sequential processing completed.")
+    
+    time_thread = run_threading(dataset, num_threads)
+    print("Threading processing completed.")
+    
+    time_multi = run_multiprocessing(dataset, num_processes)
+    print("Multiprocessing completed.\n")
+
+    # The Fastest Method
+    times = {
+        "Sequential": time_seq,
+        "Threading": time_thread,
+        "Multiprocessing": time_multi
+    }
+    fastest_method = min(times, key=times.get)
+
+    # Analytic Report
+    print("========== GRAPHIC ANALYTICS REPORT ==========\n")
+    print("Vertices distribution by object type:")
+    for cat, count in CATEGORIES.items():
+        percentage = (count / num_vertices) * 100
+        print(f"{cat:16}: {count} vertices ({percentage:.2f}%)")
+    
+    print(f"\nTotal vertices processed: {num_vertices}\n")
+    
+    print("========== PERFORMANCE ==========")
+    print(f"Sequential      : {time_seq:.4f}s")
+    print(f"Threading       : {time_thread:.4f}s")
+    print(f"Multiprocessing : {time_multi:.4f}s")
+    print(f"Fastest Method  : {fastest_method}")
