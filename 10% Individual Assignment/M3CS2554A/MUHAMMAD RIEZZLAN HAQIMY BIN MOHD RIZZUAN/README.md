@@ -3,7 +3,7 @@
 
 ## 1. Introduction
 Computer Graphics and Visualisation are core disciplines in computer science focused on generating, manipulating, and rendering visual content, as well as transforming complex abstract data into intuitive visual representations. While computer graphics synthesizes images from geometric models (such as in video games, animations, and simulations), visualisation bridges data science and human perception, enabling users to explore patterns, trends, and anomalies in complex datasets.
-
+ 
 ---
  
 ## 2. The Computer Graphics Pipeline
